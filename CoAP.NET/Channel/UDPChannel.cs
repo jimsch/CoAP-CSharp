@@ -715,7 +715,9 @@ namespace Com.AugustCellars.CoAP.Channel
                         _socket.Socket.Bind(new IPEndPoint(IPAddress.Any, Port));
                     }
                     else {
-                        // _socket.Socket.DualMode = true;
+#if NETCOREAPP3_1
+                        _socket.Socket.DualMode = true;
+#endif
 
                         if (!_socket.Socket.DualMode) {
 #if LOG_UDP_CHANNEL
