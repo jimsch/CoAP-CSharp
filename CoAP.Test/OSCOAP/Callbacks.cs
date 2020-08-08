@@ -77,7 +77,7 @@ namespace CoAP.Test.Std10.OSCOAP
 
             case 1:
                 _callbackCode = e.Code;
-                e.SecurityContext = SecurityContext.DeriveGroupContext(secret2, groupId2, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null);
+                e.SecurityContext = GroupSecurityContext.DeriveGroupContext(secret2, groupId2, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null, null, null);
                 break;
 
             default:
@@ -93,8 +93,8 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void PivExhaustion()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null);
-            SecurityContext context2 = SecurityContext.DeriveGroupContext(secret2, groupId2, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null);
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null, null, null);
+            SecurityContext context2 = GroupSecurityContext.DeriveGroupContext(secret2, groupId2, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null, null, null);
             for (int i = 0; i < 10; i++) {
                 context.Sender.IncrementSequenceNumber();
             }
@@ -122,7 +122,7 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void NoGroupId()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null);
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null, null, null);
 
             CoapClient client = new CoapClient($"coap://localhost:{_serverPort}/abc") {
                 OscoreContext = context,
@@ -138,7 +138,7 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void SetGroupId()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][]{serverId},  new OneKey[]{_serverSign1});
 
             CoapClient client = new CoapClient($"coap://localhost:{_serverPort}/abc") {
@@ -156,9 +156,9 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void MissingKeyId()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][] { serverId }, new OneKey[] { _serverSign1 });
-            SecurityContext serverContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+            SecurityContext serverContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                 new byte[][]{clientId2}, new OneKey[]{_clientSign2});
             _server.SecurityContexts.Add(serverContext);
             serverContext.OscoreEvents += ServerEventHandler;
@@ -177,9 +177,9 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void SupplyMissingKeyId()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][] { serverId }, new OneKey[] { _serverSign1 });
-            SecurityContext serverContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+            SecurityContext serverContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                 new byte[][] { clientId2 }, new OneKey[] { _clientSign2 });
             _server.SecurityContexts.Add(serverContext);
             serverContext.OscoreEvents += ServerEventHandler;
@@ -200,9 +200,9 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void ServerIvExhaustion()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][] { serverId }, new OneKey[] { _serverSign1 });
-            SecurityContext serverContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+            SecurityContext serverContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                 new byte[][] { clientId2, clientId }, new OneKey[] { _clientSign2, _clientSign1 });
             _server.SecurityContexts.Add(serverContext);
             serverContext.OscoreEvents += ServerEventHandler;
@@ -236,9 +236,9 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void ServerNewSender()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][] {serverId, serverId2}, new OneKey[] {_serverSign1, _serverSign1});
-            SecurityContext serverContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+            SecurityContext serverContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                 new byte[][] {clientId2, clientId}, new OneKey[] {_clientSign2, _clientSign1});
             _server.SecurityContexts.Add(serverContext);
             serverContext.OscoreEvents += ServerEventHandler;
@@ -263,9 +263,9 @@ namespace CoAP.Test.Std10.OSCOAP
         [TestMethod]
         public void ServerNewSenderGroup()
         {
-            SecurityContext context = SecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1,
+            SecurityContext context = GroupSecurityContext.DeriveGroupContext(secret, groupId1, clientId, AlgorithmValues.EdDSA, _clientSign1, null, null,
                 new byte[][] { serverId, serverId2 }, new OneKey[] { _serverSign1, _serverSign1 });
-            SecurityContext serverContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+            SecurityContext serverContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                 new byte[][] { clientId2, clientId }, new OneKey[] { _clientSign2, _clientSign1 });
             _server.SecurityContexts.Add(serverContext);
             serverContext.OscoreEvents += ServerEventHandler;
@@ -319,13 +319,13 @@ namespace CoAP.Test.Std10.OSCOAP
                 break;
 
             case 1:
-                e.SecurityContext = SecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1,
+                e.SecurityContext = GroupSecurityContext.DeriveGroupContext(secret, groupId1, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                     new byte[][]{clientId}, new OneKey[]{_clientSign1});
                 break;
 
                 case 2:
-                    e.SecurityContext.AddRecipient(clientId, _clientSign1);
-                    e.RecipientContext = e.SecurityContext.Recipients[clientId];
+                    ((GroupSecurityContext)e.SecurityContext).AddRecipient(clientId, _clientSign1);
+                    e.RecipientContext = ((GroupSecurityContext) e.SecurityContext).Recipients[clientId];
                     break;
 
                 case 3:
@@ -333,7 +333,7 @@ namespace CoAP.Test.Std10.OSCOAP
                     break;
 
                 case 4:
-                    e.SecurityContext = SecurityContext.DeriveGroupContext(secret2, groupId2, serverId, AlgorithmValues.EdDSA, _serverSign1,
+                    e.SecurityContext = GroupSecurityContext.DeriveGroupContext(secret2, groupId2, serverId, AlgorithmValues.EdDSA, _serverSign1, null, null,
                         new byte[][]{clientId}, new OneKey[]{_clientSign1} );
                     break;
 

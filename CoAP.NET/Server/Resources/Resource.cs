@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Text;
 using Com.AugustCellars.CoAP.Log;
 using Com.AugustCellars.CoAP.Net;
 using Com.AugustCellars.CoAP.Observe;
@@ -166,7 +167,15 @@ namespace Com.AugustCellars.CoAP.Server.Resources
         /// Get or Set the text that is returned in the event that security is requiried
         /// but is not provided.
         /// </summary>
-        public String RequireSecurityErrorText { get; set; } = null;
+        public String RequireSecurityErrorText {
+            set {
+                RequireSecurityError = Encoding.UTF8.GetBytes(value);
+                RequireSecurityMediaType = MediaType.TextPlain;
+            }
+        }
+
+        public byte[] RequireSecurityError { get; set; }
+        public int RequireSecurityMediaType { get; set; }
 
         /// <inheritdoc/>
         public ResourceAttributes Attributes { get; } = new ResourceAttributes();
@@ -344,7 +353,7 @@ namespace Com.AugustCellars.CoAP.Server.Resources
 
             if (RequireSecurity) {
                 if ((exchange.OscoreContext == null) &&  (null == (exchange.Request.Session as ISecureSession))) {
-                    ce.Respond(StatusCode.Unauthorized, RequireSecurityErrorText);
+                    ce.Respond(StatusCode.Unauthorized, RequireSecurityError, RequireSecurityMediaType);
                     return;
                 }
             }

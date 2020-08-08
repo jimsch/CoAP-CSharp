@@ -21,6 +21,7 @@ using Com.AugustCellars.COSE;
 using Org.BouncyCastle.Utilities.Encoders;
 using PeterO.Cbor;
 using Attributes = Com.AugustCellars.COSE.Attributes;
+using System.Text.RegularExpressions;
 
 namespace Com.AugustCellars.CoAP.OSCOAP
 {
@@ -29,9 +30,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         static readonly ILogger _Log = LogManager.GetLogger(typeof(OscoapLayer));
         static readonly byte[] fixedHeader = new byte[] {0x40, 0x01, 0xff, 0xff};
         bool _replayWindow;
-        readonly ConcurrentDictionary<Exchange.KeyUri, BlockHolder> _ongoingExchanges = new ConcurrentDictionary<Exchange.KeyUri, BlockHolder>();
 
-        class BlockHolder
+#if false
+        public class BlockHolder
         {
             readonly BlockwiseStatus _requestStatus;
             readonly BlockwiseStatus _responseStatus;
@@ -51,7 +52,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 exchange.Response = _response;
             }
         }
-
+#endif
 
         /// <summary>
         /// Constructs a new OSCORE layer.
@@ -75,7 +76,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         }
 
         /// <inheritdoc />
-        public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if ((request.OscoreContext != null) || (exchange.OscoreContext != null)) {
                 SecurityContext ctx = exchange.OscoreContext;
@@ -128,9 +129,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 CBORObject aad = CBORObject.NewArray();
                 aad.Add(CBORObject.FromObject(1)); // version
                 aad.Add(CBORObject.NewArray());  // Algorithms
-                aad[1].Add(CBORObject.FromObject(ctx.Sender.Algorithm));
-                if (ctx.Sender.SigningAlgorithm != null) {
-                    aad[1].Add(ctx.Sender.SigningAlgorithm);
+                aad[1].Add(CBORObject.FromObject(ctx.Algorithm));
+                if (ctx.SigningAlgorithm != null) {
+                    aad[1].Add(ctx.SigningAlgorithm);
                     if (ctx.CountersignParams != null) {
                         aad[1].Add(ctx.CountersignParams);
                     }
@@ -147,7 +148,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 enc.SetExternalData(aad.EncodeToBytes());
                 enc.AddAttribute(HeaderKeys.IV, ctx.Sender.GetIV(ctx.Sender.PartialIV), Attributes.DO_NOT_SEND);
                 enc.AddAttribute(HeaderKeys.PartialIV, CBORObject.FromObject(ctx.Sender.PartialIV), /* Attributes.PROTECTED */ Attributes.DO_NOT_SEND);
-                enc.AddAttribute(HeaderKeys.Algorithm, ctx.Sender.Algorithm, Attributes.DO_NOT_SEND);
+                enc.AddAttribute(HeaderKeys.Algorithm, ctx.Algorithm, Attributes.DO_NOT_SEND);
                 enc.AddAttribute(HeaderKeys.KeyId, CBORObject.FromObject(ctx.Sender.Id), /*Attributes.PROTECTED*/ Attributes.DO_NOT_SEND);
                 if (ctx.GroupId != null) {
                     enc.AddAttribute(HeaderKeys.KidContext, CBORObject.FromObject(ctx.GroupId), Attributes.DO_NOT_SEND);
@@ -158,12 +159,12 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                                                        BitConverter.ToString(ctx.Sender.GetIV(ctx.Sender.PartialIV).GetByteString()),
                                                        BitConverter.ToString(ctx.Sender.Key)));
 
-                byte[] optionValue = BuildOscoreOption(enc);
+                byte[] optionValue = BuildOscoreOption(enc, ctx.IsGroupContext);
 
                 CounterSignature1 cs1 = null;
                 if (ctx.Sender.SigningKey != null) {
                     cs1 = new CounterSignature1(ctx.Sender.SigningKey);
-                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.Sender.SigningAlgorithm, Attributes.DO_NOT_SEND);
+                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.SigningAlgorithm, Attributes.DO_NOT_SEND);
                     aad.Add(optionValue);
                     _Log.Info(m => m("SendRequest: AAD for Signature = {0}", BitConverter.ToString(aad.EncodeToBytes())));
                     cs1.SetExternalData(aad.EncodeToBytes());
@@ -189,15 +190,14 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 request.Method = request.HasOption(OptionType.Observe) ? Method.FETCH : Method.POST;
                 request.Code = (int) request.Method;
             }
-            base.SendRequest(nextLayer, exchange, request);
+            return base.SendRequest(nextLayer, exchange, request);
         }
 
         /// <inheritdoc />
-        public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (!request.HasOption(OptionType.Oscore)) {
-                base.ReceiveRequest(nextLayer, exchange, request);
-                return;
+                return base.ReceiveRequest(nextLayer, exchange, request);
             }
 
             Response response;
@@ -206,8 +206,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 request.RemoveOptions(OptionType.Oscore);
 
                 _Log.Info(m => m("Incoming Request: {0}", Utils.ToString(request)));
+                bool isGroup;
 
-                Encrypt0Message msg = Uncompress(op.RawValue);
+                Encrypt0Message msg = Uncompress(op.RawValue, out isGroup);
                 if (msg == null) {
                     //  Only bother to reply to CON messages
                     if (request.Type == MessageType.CON) {
@@ -216,7 +217,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         };
                         exchange.SendResponse(response);
                     }
-                    return;
+                    return false;
                 }
 
                 msg.SetEncryptedContent(request.Payload);
@@ -231,6 +232,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 CBORObject gid = null;
                 if (exchange.OscoreContext != null) {
+                    // M00QUEST - What if we go from group to pairwise?
+                    // M00QUEST - Should we be checking that the gid and kid are the same if they
+                    //      are in the message?
                     contexts.Add(exchange.OscoreContext);
                     if (exchange.OscoreContext.GroupId != null) {
                         gid = CBORObject.FromObject(exchange.OscoreContext.GroupId);
@@ -243,31 +247,64 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                     if (kid == null) {
                         exchange.SendResponse(new Response(StatusCode.BadRequest));
-                        return;
+                        return false;
                     }
 
                     if (gid != null) {
                         contexts =  exchange.EndPoint.SecurityContexts.FindByGroupId(gid.GetByteString());
                         if (contexts.Count == 0) {
-                            OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownGroupIdentifier, gid.GetByteString(), kid.GetByteString(), null, null);
+                            OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownGroupIdentifier, gid.GetByteString(), kid.GetByteString(), null, (IRecipientEntityContext) null);
 
                             exchange.EndPoint.SecurityContexts.OnEvent(e);
+                            _Log.Info(m => m("Send an Unknown Group Identifier event"));
 
                             if (e.SecurityContext != null) {
                                 contexts.Add(e.SecurityContext);
+                            }
+                            else {
+                                if (request.Type == MessageType.CON) {
+                                    response = new Response(StatusCode.Unauthorized)
+                                    {
+                                        PayloadString = "No Context Found - 1"
+                                    };
+                                    exchange.SendResponse(response);
+                                }
+                                return false; // Ignore messages that have no known security context.
                             }
                         }
                     }
                     else {
                         contexts = exchange.EndPoint.SecurityContexts.FindByKid(kid.GetByteString());
+                        if (contexts.Count == 0) {
+                            OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownKeyIdentifier, null, kid.GetByteString(), null, (IRecipientEntityContext)null);
+
+                            exchange.EndPoint.SecurityContexts.OnEvent(e);
+                            _Log.Info(m => m("Send an UnknownKey Identifier event"));
+
+                            if (e.SecurityContext != null) {
+                                contexts.Add(e.SecurityContext);
+                            }
+                            else {
+                                if (request.Type == MessageType.CON) {
+                                    response = new Response(StatusCode.Unauthorized)
+                                    {
+                                        PayloadString = "No Context Found - 1"
+                                    };
+                                    exchange.SendResponse(response);
+                                }
+                                return false; // Ignore messages that have no known security context.
+                            }
+                        }
                     }
 
                     if (contexts.Count == 0) {
-                        response = new Response(StatusCode.Unauthorized) {
-                            PayloadString = "No Context Found - 1"
-                        };
-                        exchange.SendResponse(response);
-                        return; // Ignore messages that have no known security context.
+                        if (request.Type == MessageType.CON) {
+                            response = new Response(StatusCode.Unauthorized) {
+                                PayloadString = "No Context Found - 1"
+                            };
+                            exchange.SendResponse(response);
+                        }
+                        return false; // Ignore messages that have no known security context.
                     }
                 }
 
@@ -299,7 +336,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     }
 
                     foreach (SecurityContext context in contexts) {
-                        SecurityContext.EntityContext recip = context.Recipient;
+                        IRecipientEntityContext recip = context.Recipient;
                         if (gid != null) {
                             if (recip != null) {
                                 if (!SecurityContext.ByteArrayComparer.AreEqual(recip.Id, kid.GetByteString())) {
@@ -307,12 +344,27 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                                 }
                             }
                             else {
-                                if (context.Recipients.ContainsKey(kid.GetByteString())) {
-                                    recip = context.Recipients[kid.GetByteString()];
+                                GroupSecurityContext gCtx = null;
+                                if (context.IsGroupContext) {
+                                    gCtx = (GroupSecurityContext)context;
+                                }
+                                if (gCtx != null && gCtx.Recipients.ContainsKey(kid.GetByteString())) {
+                                    recip = gCtx.Recipients[kid.GetByteString()];
                                 }
                                 else if (pass == 1) {
-                                    OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownKeyIdentifier, gid.GetByteString(), kid.GetByteString(), context, null);
+                                    OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownKeyIdentifier, gid.GetByteString(), kid.GetByteString(), context, (IRecipientEntityContext)null);
+                                    _Log.Info(m => m("Sent Unknown Key Identifier event."));
                                     context.OnEvent(e);
+
+                                    if (e.StatusCode != 0) {
+                                        Response r = new Response(e.StatusCode);
+                                        if (e.StatusCode == StatusCode.ServiceUnavailable) {
+                                            r.MaxAge = 1;
+                                        }
+                                        exchange.SendResponse(r);
+                                        return false;
+                                    }
+
                                     if (e.RecipientContext == null) { 
                                         continue;
                                     }
@@ -338,9 +390,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         }
 
                         aad[1] = CBORObject.NewArray();
-                        aad[1].Add(recip.Algorithm);
+                        aad[1].Add(context.Algorithm);
                         if (context.Sender.SigningKey != null) {
-                            aad[1].Add(context.Sender.SigningKey[CoseKeyKeys.Algorithm]);
+                            aad[1].Add(context.SigningAlgorithm);
                             if (context.CountersignParams != null) {
                                 aad[1].Add(context.CountersignParams);
                             }
@@ -357,7 +409,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                             Array.Copy(request.Payload, rgbPayload.Length, rgbSignature, 0, cbSignature);
 
                             CounterSignature1 cs1 = new CounterSignature1(rgbSignature);
-                            cs1.AddAttribute(HeaderKeys.Algorithm, context.Sender.SigningAlgorithm, Attributes.DO_NOT_SEND);
+                            cs1.AddAttribute(HeaderKeys.Algorithm, context.SigningAlgorithm, Attributes.DO_NOT_SEND);
                             cs1.SetObject(msg);
                             cs1.SetKey(recip.SigningKey);
 
@@ -391,7 +443,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                         msg.SetExternalData(aad.EncodeToBytes());
 
-                        msg.AddAttribute(HeaderKeys.Algorithm, recip.Algorithm, Attributes.DO_NOT_SEND);
+                        msg.AddAttribute(HeaderKeys.Algorithm, context.Algorithm, Attributes.DO_NOT_SEND);
                         msg.AddAttribute(HeaderKeys.IV, recip.GetIV(partialIV), Attributes.DO_NOT_SEND);
 
                         try {
@@ -421,7 +473,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         };
                         exchange.SendResponse(response);
                     }
-                    return;
+                    return false;
                 }
 
                 exchange.OscoreContext = ctx; // So we know it on the way back.
@@ -448,7 +500,8 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 //  We may want a new exchange at this point if it relates to a new message for blockwise.
 
-                if (request.HasOption(OptionType.Block2)) {
+#if false
+                if (request.HasOption(OptionType.Block2) || request.HasOption(OptionType.Block1))   {
                     Exchange.KeyUri keyUri = new Exchange.KeyUri(request.GetOptions(),  request.Source);
                     BlockHolder block;
                     _ongoingExchanges.TryGetValue(keyUri, out block);
@@ -457,6 +510,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         block.RestoreTo(exchange);
                     }
                 }
+#endif
 
                 request.Payload = newRequest.Payload;
             }
@@ -471,10 +525,10 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     exchange.SendResponse(response);
                 }
                 //  Ignore messages that we cannot decrypt.
-                return;
+                return false;
             }
 
-            base.ReceiveRequest(nextLayer, exchange, request);
+            return base.ReceiveRequest(nextLayer, exchange, request);
         }
 
         public override void SendResponse(INextLayer nextLayer, Exchange exchange, Response response)
@@ -524,13 +578,13 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 CBORObject aad = CBORObject.NewArray();
                 aad.Add(1);
                 aad.Add(CBORObject.NewArray());
-                aad[1].Add(ctx.Sender.Algorithm);
+                aad[1].Add(ctx.Algorithm);
                 aad.Add(exchange.OscoapSenderId);
                 aad.Add(exchange.OscoapSequenceNumber);
                 aad.Add(CBORObject.FromObject(new byte[0])); // I Options
 
-                if (ctx.Sender.SigningAlgorithm != null) {
-                    aad[1].Add(ctx.Sender.SigningAlgorithm);
+                if (ctx.SigningAlgorithm != null) {
+                    aad[1].Add(ctx.SigningAlgorithm);
                     if (ctx.CountersignParams != null) {
                         aad[1].Add(ctx.CountersignParams);
                     }
@@ -539,6 +593,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         aad[1].Add(ctx.CountersignKeyParams);
                     }
                 }
+
                 if (_Log.IsInfoEnabled) {
                     _Log.Info("SendResponse: AAD = " + BitConverter.ToString(aad.EncodeToBytes()));
                 }
@@ -554,29 +609,32 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 if (response.HasOption(OptionType.Observe)) {
                     enc.AddAttribute(HeaderKeys.PartialIV, CBORObject.FromObject(ctx.Sender.PartialIV),
-                                     Attributes.UNPROTECTED);
+                        Attributes.UNPROTECTED);
                     enc.AddAttribute(HeaderKeys.IV, ctx.Sender.GetIV(ctx.Sender.PartialIV), Attributes.DO_NOT_SEND);
                     ctx.Sender.IncrementSequenceNumber();
                     if (ctx.Sender.SendSequenceNumberUpdate) {
                         OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.SenderIvSave, null, null, ctx, ctx.Sender);
                         ctx.OnEvent(e);
                     }
+
                     if (ctx.IsGroupContext) {
                         enc.AddAttribute(HeaderKeys.KeyId, CBORObject.FromObject(ctx.Sender.Id),
-                                         Attributes.UNPROTECTED);
+                            Attributes.UNPROTECTED);
                     }
                 }
                 else if (ctx.IsGroupContext) {
-                    if (!ctx.Recipients.ContainsKey(exchange.OscoapSenderId)) {
+                    GroupSecurityContext gCtx = (GroupSecurityContext) ctx;
+                    if (!gCtx.Recipients.ContainsKey(exchange.OscoapSenderId)) {
                         return;
                     }
-                    CBORObject iv = ctx.Recipients[exchange.OscoapSenderId].GetIV(exchange.OscoapSequenceNumber);
+
+                    CBORObject iv = gCtx.Recipients[exchange.OscoapSenderId].GetIV(exchange.OscoapSequenceNumber);
 
                     enc.AddAttribute(HeaderKeys.IV, iv, Attributes.DO_NOT_SEND);
                     enc.AddAttribute(HeaderKeys.KeyId, CBORObject.FromObject(ctx.Sender.Id),
                         Attributes.UNPROTECTED);
                 }
-                else { 
+                else {
                     CBORObject iv = ctx.Recipient.GetIV(exchange.OscoapSequenceNumber);
 
                     enc.AddAttribute(HeaderKeys.IV, iv, Attributes.DO_NOT_SEND);
@@ -585,19 +643,19 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 _Log.Info(m => m($"SendResponse: IV = {BitConverter.ToString(enc.FindAttribute(HeaderKeys.IV, Attributes.DO_NOT_SEND).GetByteString())}"));
                 _Log.Info(m => m($"SendResponse: Key = {BitConverter.ToString(ctx.Sender.Key)}"));
 
-                byte[] optionValue = BuildOscoreOption(enc);
+                byte[] optionValue = BuildOscoreOption(enc, ctx.IsGroupContext);
 
                 CounterSignature1 cs1 = null;
                 if (ctx.IsGroupContext) {
                     aad.Add(optionValue);
                     cs1 = new CounterSignature1(ctx.Sender.SigningKey);
-                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.Sender.SigningAlgorithm, Attributes.DO_NOT_SEND);
+                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.SigningAlgorithm, Attributes.DO_NOT_SEND);
                     cs1.SetExternalData(aad.EncodeToBytes());
                     cs1.SetObject(enc);
                     enc.CounterSigner1 = cs1;
                 }
 
-                enc.AddAttribute(HeaderKeys.Algorithm, ctx.Sender.Algorithm, Attributes.DO_NOT_SEND);
+                enc.AddAttribute(HeaderKeys.Algorithm, ctx.Algorithm, Attributes.DO_NOT_SEND);
                 enc.Encrypt(ctx.Sender.Key);
 
                 OscoapOption o = new OscoapOption(OptionType.Oscore);
@@ -615,6 +673,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     response.Payload = rgbOrig;
                 }
 
+#if false
                 //  Need to be able to retrieve this again under some circumstances.
 
                 if (encryptedResponse.HasOption(OptionType.Block2)) {
@@ -639,6 +698,8 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         _ongoingExchanges.TryRemove(keyUri, out exc);
                     }
                 }
+
+#endif
             }
 
             base.SendResponse(nextLayer, exchange, response);
@@ -659,12 +720,13 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 SecurityContext ctx = exchange.OscoreContext;
 
                 bool fServerIv = true;
+                bool isGroup;
 
-                Encrypt0Message msg = Uncompress(op.RawValue);
+                Encrypt0Message msg = Uncompress(op.RawValue, out isGroup);
                 if (msg == null) return;
                 msg.SetEncryptedContent(response.Payload);
 
-                SecurityContext.EntityContext recip = ctx.Recipient;
+                IRecipientEntityContext recip = ctx.Recipient;
                 if (ctx.IsGroupContext) {
                     if (ctx.GroupId == null) {
                         //  This is not currently a valid state to be in
@@ -680,7 +742,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                     CBORObject gid = msg.FindAttribute(HeaderKeys.KidContext);
                     if (gid != null && !SecurityContext.ByteArrayComparer.AreEqual(ctx.GroupId, gid.GetByteString())) {
-                        OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownGroupIdentifier, gid.GetByteString(), kid.GetByteString(), null, null);
+                        OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownGroupIdentifier, gid.GetByteString(), kid.GetByteString(), null, (IRecipientEntityContext) null);
                         ctx.OnEvent(e);
 
                         if (e.SecurityContext == null) {
@@ -694,16 +756,19 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         gid = CBORObject.FromObject(ctx.GroupId);
                     }
 
-                    ctx.Recipients.TryGetValue(kid.GetByteString(), out recip);
-                    if (recip == null) {
-                        OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownKeyIdentifier, gid.GetByteString(), kid.GetByteString(), ctx, null);
-                        ctx.OnEvent(e);
+                    if (ctx.IsGroupContext) {
+                        GroupSecurityContext gCtx = (GroupSecurityContext)ctx;
+                        gCtx.Recipients.TryGetValue(kid.GetByteString(), out recip);
+                        if (recip == null) {
+                            OscoreEvent e = new OscoreEvent(OscoreEvent.EventCode.UnknownKeyIdentifier, gid.GetByteString(), kid.GetByteString(), ctx, (IRecipientEntityContext) null);
+                            ctx.OnEvent(e);
 
-                        if (e.RecipientContext == null) {
-                            return;
+                            if (e.RecipientContext == null) {
+                                return;
+                            }
+
+                            recip = e.RecipientContext;
                         }
-
-                        recip = e.RecipientContext;
                     }
 
                     if (msg.FindAttribute(HeaderKeys.PartialIV) == null) {
@@ -728,7 +793,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 if (fServerIv) if (_replayWindow && recip.ReplayWindow.HitTest(seqNo)) return;
 
-                msg.AddAttribute(HeaderKeys.Algorithm, recip.Algorithm, Attributes.DO_NOT_SEND);
+                msg.AddAttribute(HeaderKeys.Algorithm, ctx.Algorithm, Attributes.DO_NOT_SEND);
 
                 CBORObject fullIV;
                 if (fServerIv) {
@@ -744,13 +809,13 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 CBORObject aad = CBORObject.NewArray();
                 aad.Add(1); // Version #
                 aad.Add(CBORObject.NewArray());
-                aad[1].Add(recip.Algorithm);
+                aad[1].Add(ctx.Algorithm);
                 aad.Add(ctx.Sender.Id);
                 aad.Add(ctx.Sender.PartialIV);
                 aad.Add(CBORObject.FromObject(new byte[0])); // OPTIONS
 
-                if (ctx.Sender.SigningAlgorithm != null) {
-                    aad[1].Add(ctx.Sender.SigningAlgorithm);
+                if (ctx.SigningAlgorithm != null) {
+                    aad[1].Add(ctx.SigningAlgorithm);
                     if (ctx.CountersignParams != null) {
                         aad[1].Add(ctx.CountersignParams);
                     }
@@ -778,7 +843,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     Array.Copy(response.Payload, rgbPayload.Length, rgbSignature, 0, cbSignature);
 
                     CounterSignature1 cs1 = new CounterSignature1(rgbSignature);
-                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.Sender.SigningAlgorithm, Attributes.DO_NOT_SEND);
+                    cs1.AddAttribute(HeaderKeys.Algorithm, ctx.SigningAlgorithm, Attributes.DO_NOT_SEND);
                     cs1.SetObject(msg);
                     cs1.SetKey(recip.SigningKey);
 
@@ -991,7 +1056,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
             }
         }
 
-        private static byte[] BuildOscoreOption(Encrypt0Message msg)
+        private static byte[] BuildOscoreOption(Encrypt0Message msg, bool usingGroup)
         {
             // Start with 0abc deee
             //  a, b, c and d are presence flags
@@ -1017,11 +1082,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 head |= 0x10;
             }
 
-            CBORObject sig = msg.FindAttribute(HeaderKeys.CounterSignature);
-            byte[] sigBytes = null;
-            if (sig != null) {
-                sigBytes = sig.EncodeToBytes();
-                cbSize += (1 + sigBytes.Length);
+            if (usingGroup) {
                 head |= 0x20;
             }
 
@@ -1048,13 +1109,6 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 cbSize += gid.GetByteString().Length + 1;
             }
 
-            if (sig != null) {
-                if (sigBytes.Length > 255) throw new CoAPException("SIG too large");
-                optionValue[cbSize] = (byte) sigBytes.Length;
-                Array.Copy(sigBytes, 0, optionValue, cbSize + 1, sig.GetByteString().Length);
-                cbSize += sigBytes.Length + 1;
-            }
-
             if (kid != null) {
                 if (kid.GetByteString().Length > 255) throw new CoAPException("KID too large");
                 Array.Copy(kid.GetByteString(), 0, optionValue, cbSize, kid.GetByteString().Length);
@@ -1063,16 +1117,18 @@ namespace Com.AugustCellars.CoAP.OSCOAP
             return optionValue;
         }
 
-        private static Encrypt0Message Uncompress(byte[] raw)
+        private static Encrypt0Message Uncompress(byte[] raw, out bool isGroup)
         {
             CBORObject map = CBORObject.NewMap();
 
             if (raw.Length == 0) raw = new byte[1];
+            isGroup = (raw[0] & 0x20) != 0;
 
             //  Decode the weird body
             //  First byte is of the form 0abcdeee where abcd are flags and eee is the the IV size.
             if (0 != (raw[0] & 0x80)) return null; // This is not legal
             if (0 != (raw[0] & 0x40)) return null; // These are not currently supported.
+
 
             int iX = 1;
             if (0 != (raw[0] & 0x07)) {
@@ -1087,13 +1143,6 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 Array.Copy(raw, iX + 1, gidX, 0, gidX.Length);
                 iX += (gidX.Length + 1);
                 map.Add(HeaderKeys.KidContext, gidX);
-            }
-
-            if (0 != (raw[0] & 0x20)) {
-                byte[] counter = new byte[raw[iX]];
-                Array.Copy(raw, iX + 1, counter, 0, counter.Length);
-                iX += (counter.Length + 1);
-                map.Add(HeaderKeys.CounterSignature, counter);
             }
 
             if (0 != (raw[0] & 0x08)) {

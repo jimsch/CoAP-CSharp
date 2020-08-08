@@ -21,9 +21,13 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         public byte[] GroupIdentifier { get; }
         public byte[] KeyIdentifier { get; }
         public SecurityContext SecurityContext { get; set; }
-        public SecurityContext.EntityContext RecipientContext { get; set; }
+        public IRecipientEntityContext RecipientContext { get; set; }
+        public ISenderEntityContext SenderContext { get; set; }
 
-        public OscoreEvent(EventCode code, byte[] groupIdentifier, byte[] keyIdentifier, SecurityContext context, SecurityContext.EntityContext recipient)
+        // If a different status code is to be returned - put it here.
+        public StatusCode StatusCode { get; set; }
+
+        public OscoreEvent(EventCode code, byte[] groupIdentifier, byte[] keyIdentifier, SecurityContext context, IRecipientEntityContext recipient)
         {
             Code = code;
             GroupIdentifier = groupIdentifier;
@@ -31,5 +35,15 @@ namespace Com.AugustCellars.CoAP.OSCOAP
             SecurityContext = context;
             RecipientContext = recipient;
         }
+
+        public OscoreEvent(EventCode code, byte[] groupIdentifier, byte[] keyIdentifier, SecurityContext context, ISenderEntityContext sender)
+        {
+            Code = code;
+            GroupIdentifier = groupIdentifier;
+            KeyIdentifier = keyIdentifier;
+            SecurityContext = context;
+            SenderContext = sender;
+        }
+
     }
 }

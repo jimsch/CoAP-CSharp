@@ -118,6 +118,9 @@ namespace Com.AugustCellars.CoAP.Net
         public CoAPEndPoint(IChannel channel, ICoapConfig config)
         {
             dataChannel = channel ?? throw new ArgumentNullException(nameof(channel));
+            if (config == null) {
+                config = CoapConfig.Default;
+            }
             Config = config;
             _matcher = new Matcher(config);
             _coapStack = new CoapStack(config);

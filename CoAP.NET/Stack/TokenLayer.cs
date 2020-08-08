@@ -39,7 +39,7 @@ namespace Com.AugustCellars.CoAP.Stack
         }
 
         /// <inheritdoc/>
-        public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
 #if false
             //  We now do this at the matcher layer so it can be random
@@ -47,7 +47,7 @@ namespace Com.AugustCellars.CoAP.Stack
                 request.Token = NewToken();
             }
 #endif
-            base.SendRequest(nextLayer, exchange, request);
+            return base.SendRequest(nextLayer, exchange, request);
         }
 
         /// <inheritdoc/>
@@ -62,13 +62,13 @@ namespace Com.AugustCellars.CoAP.Stack
         }
 
         /// <inheritdoc/>
-        public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (exchange.CurrentRequest.Token == null) {
                 _Log.Info("ReceiveRequest: Received request token cannot be null");
                 throw new InvalidOperationException("Received requests's token cannot be null, use byte[0] for empty tokens");
             }
-            base.ReceiveRequest(nextLayer, exchange, request);
+            return base.ReceiveRequest(nextLayer, exchange, request);
         }
 
         /// <inheritdoc/>

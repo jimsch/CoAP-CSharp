@@ -25,9 +25,13 @@ namespace Com.AugustCellars.CoAP.Stack
         public IExecutor Executor { get; set; }
 
         /// <inheritdoc/>
-        public virtual void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public virtual bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
+            if (nextLayer == null) {
+                return true;
+            }
             nextLayer.SendRequest(exchange, request);
+            return false;
         }
 
         /// <inheritdoc/>
@@ -43,9 +47,12 @@ namespace Com.AugustCellars.CoAP.Stack
         }
 
         /// <inheritdoc/>
-        public virtual void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public virtual bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
-            nextLayer.ReceiveRequest(exchange, request);
+            if (nextLayer == null) {
+                return true;
+            }
+            return nextLayer.ReceiveRequest(exchange, request);
         }
 
         /// <inheritdoc/>

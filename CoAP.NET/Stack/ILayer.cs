@@ -31,7 +31,7 @@ namespace Com.AugustCellars.CoAP.Stack
         /// <param name="nextLayer">the next layer</param>
         /// <param name="exchange">the exchange associated</param>
         /// <param name="request">the request to send</param>
-        void SendRequest(INextLayer nextLayer, Exchange exchange, Request request);
+        bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request);
         /// <summary>
         /// Filters a response sending event.
         /// </summary>
@@ -53,7 +53,7 @@ namespace Com.AugustCellars.CoAP.Stack
         /// <param name="nextLayer">the next layer</param>
         /// <param name="exchange">the exchange associated</param>
         /// <param name="request">the request to receive</param>
-        void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request);
+        bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request);
         /// <summary>
         /// Filters a response receiving event.
         /// </summary>
@@ -91,7 +91,7 @@ namespace Com.AugustCellars.CoAP.Stack
         /// <summary>
         /// Receives a request to next layer.
         /// </summary>
-        void ReceiveRequest(Exchange exchange, Request request);
+        bool ReceiveRequest(Exchange exchange, Request request);
         /// <summary>
         /// Receives a response to next layer.
         /// </summary>

@@ -109,8 +109,11 @@ namespace Com.AugustCellars.CoAP
         /// </summary>
         public const int ApplicationAceCbor = 65000;
 
+        public const int ApplicationAceGroupcommCbor = 66000;
+
         public const int ApplicationCoralReef = 65088;
-        public const int Coral = 999;
+        public const int ApplicationCoral = 65087;
+
         /// <summary>
         /// any
         /// </summary>
@@ -141,7 +144,7 @@ namespace Com.AugustCellars.CoAP
             registry.Add(ApplicationExi, new MediaTypeInfo(new string[] { "application/exi", "exi" }));
             registry.Add(ApplicationJson, new MediaTypeInfo(new string[] { "application/json", "json" }, false));  // Compressed w/ deflate
 
-            registry.Add(Coral, new MediaTypeInfo(new string[] {"XX", "coral"}, false, true));
+            registry.Add(ApplicationCoral, new MediaTypeInfo(new string[] {"XX", "coral"}, false, true));
         }
 
         /// <summary>

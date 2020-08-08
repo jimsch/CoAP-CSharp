@@ -516,6 +516,11 @@ namespace Com.AugustCellars.CoAP
         UnprocessableEntity = 150,
 
         /// <summary>
+        /// 44.29 Too Many Requests [RFC8516]
+        /// </summary>
+        TooManyRequests = 157,
+
+        /// <summary>
         /// 5.00 Internal Server Error
         /// </summary>
         InternalServerError = 160,
@@ -543,7 +548,12 @@ namespace Com.AugustCellars.CoAP
         /// <summary>
         /// 5.05 Proxying Not Supported
         /// </summary>
-        ProxyingNotSupported = 165
+        ProxyingNotSupported = 165,
+
+        /// <summary>
+        /// 5.08 Hop Limit Reached [RFC878]
+        /// </summary>
+        HopLimitReached = 168
     }
 
     public enum SignalCode

@@ -132,6 +132,7 @@ It is intented primarily for research and verification work.
   
   <ItemGroup>
     <Compile Include="BlockOption.cs" />
+    <Compile Include="CacheKey.cs" />
     <Compile Include="Channel\DataReceivedEventArgs.cs" />
     <Compile Include="Channel\IChannel.cs" />
     <Compile Include="Channel\IPAddressExtensions.cs" />
@@ -209,10 +210,15 @@ It is intented primarily for research and verification work.
     <Compile Include="Observe\ReregisterEventArgs.cs" />
     <Compile Include="Option.cs" />
     <Compile Include="OptionType.cs" />
+    <Compile Include="OSCOAP\EntityContext.cs" />
+    <Compile Include="OSCOAP\GroupSecurityContext.cs" />
     <Compile Include="OSCOAP\HKDF.cs" />
     <Compile Include="OSCOAP\OscoapLayer.cs" />
     <Compile Include="OSCOAP\OscoapOption.cs" />
     <Compile Include="OSCOAP\OscoreEvent.cs" />
+    <Compile Include="OSCOAP\PairSecurityContext.cs" />
+    <Compile Include="OSCOAP\ReplayWindow.cs" />
+    <Compile Include="OSCOAP\SecureBlockwiseData.cs" />
     <Compile Include="OSCOAP\SecureBlockwiseLayer.cs" />
     <Compile Include="OSCOAP\SecurityContext.cs" />
     <Compile Include="OSCOAP\SecurityContextSet.cs" />

@@ -66,6 +66,7 @@ namespace Com.AugustCellars.CoAP
             Method = method;
         }
 
+
         /// <summary>
         /// Gets the request method.
         /// </summary>
@@ -265,6 +266,9 @@ namespace Com.AugustCellars.CoAP
         public Request Send()
         {
             ValidateBeforeSending();
+            if (!EndPoint.Running) {
+                EndPoint.Start();
+            }
             EndPoint.SendRequest(this);
             return this;
         }
@@ -456,5 +460,9 @@ namespace Com.AugustCellars.CoAP
         /// Give information about what session the request came from.
         /// </summary>
         public ISession Session { get; set; }
+
+        private CacheKey _cacheKey;
+
+        public CacheKey CacheKey => _cacheKey ?? (_cacheKey = new CacheKey(GetOptions()));
     }
 }

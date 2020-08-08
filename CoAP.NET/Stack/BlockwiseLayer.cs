@@ -57,7 +57,7 @@ namespace Com.AugustCellars.CoAP.Stack
         }
 
         /// <inheritdoc/>
-        public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (request.HasOption(OptionType.Block2) && request.Block2.NUM > 0) {
                 // This is the case if the user has explicitly added a block option
@@ -74,7 +74,7 @@ namespace Com.AugustCellars.CoAP.Stack
                 status.CurrentNUM = block2.NUM;
                 status.IsRandomAccess = true;
                 exchange.ResponseBlockStatus = status;
-                base.SendRequest(nextLayer, exchange, request);
+                return base.SendRequest(nextLayer, exchange, request);
             }
             else if (RequiresBlockwise(request)) {
                 // This must be a large POST or PUT request
@@ -84,21 +84,21 @@ namespace Com.AugustCellars.CoAP.Stack
                 Request block = GetNextRequestBlock(request, status);
                 exchange.RequestBlockStatus = status;
                 exchange.CurrentRequest = block;
-                base.SendRequest(nextLayer, exchange, block);
+                return base.SendRequest(nextLayer, exchange, block);
             }
             else {
                 exchange.CurrentRequest = request;
-                base.SendRequest(nextLayer, exchange, request);
+                return base.SendRequest(nextLayer, exchange, request);
             }
         }
 
         /// <inheritdoc/>
-        public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (request.HasOption(OptionType.Block1)) {
                 //  If this is a multicast address we are receiving this on, then we should ignore it
                 if (request.IsMulticast) {
-                    return;
+                    return false;
                 }
 
                 // This must be a large POST or PUT request
@@ -124,7 +124,7 @@ namespace Com.AugustCellars.CoAP.Stack
 
                         exchange.CurrentResponse = error;
                         base.SendResponse(nextLayer, exchange, error);
-                        return;
+                        return false;
                     }
 
                     status.CurrentNUM += 1;
@@ -156,7 +156,7 @@ namespace Com.AugustCellars.CoAP.Stack
                         assembled.Session = request.Session;
                         exchange.Request = assembled;
                         exchange.CurrentRequest = assembled;
-                        base.ReceiveRequest(nextLayer, exchange, assembled);
+                        return base.ReceiveRequest(nextLayer, exchange, assembled);
                     }
                 }
                 else {
@@ -201,8 +201,10 @@ namespace Com.AugustCellars.CoAP.Stack
                 EarlyBlock2Negotiation(exchange, request);
 
                 exchange.Request = request;
-                base.ReceiveRequest(nextLayer, exchange, request);
+                return base.ReceiveRequest(nextLayer, exchange, request);
             }
+
+            return false;
         }
 
         /// <inheritdoc/>

@@ -43,6 +43,7 @@ namespace Com.AugustCellars.CoAP.Net
         {
             Origin = origin;
             CurrentRequest = request;
+            PreSecurityRequest = request;
             Timestamp = DateTime.Now;
         }
 
@@ -50,6 +51,7 @@ namespace Com.AugustCellars.CoAP.Net
         {
             Origin = other.Origin;
             CurrentRequest = other.Request;
+            PreSecurityRequest = other.PreSecurityRequest;
             Timestamp = other.Timestamp;
             OscoreContext = other.OscoreContext;
         }
@@ -73,11 +75,12 @@ namespace Com.AugustCellars.CoAP.Net
             }
         }
 
+        //  This is the original request
         public Request Request { get; set; }
 
+        //  This is the blockwise request (?)
         public Request CurrentRequest { get; set; }
 
-        public List<Option> PreSecurityOptions { get; set; }
 
         /// <summary>
         /// Gets or sets the status of the blockwise transfer of the request,
@@ -95,6 +98,12 @@ namespace Com.AugustCellars.CoAP.Net
         /// </summary>
         public BlockwiseStatus ResponseBlockStatus { get; set; }
 
+        public BlockwiseStatus SecureRequestBlockStatus { get; set; }
+
+        public BlockwiseStatus SecureResponseBlockStatus { get; set; }
+
+        public Request PreSecurityRequest { get; set; }
+
         public ObserveRelation Relation { get; set; }
 
         /// <summary>
@@ -104,16 +113,10 @@ namespace Com.AugustCellars.CoAP.Net
         public BlockOption Block1ToAck { get; set; }
 
         /// <summary>
-        /// Gets or sets the status of the security blockwise transfer of the request,
-        /// or null in case of a normal transfer,
+        /// Gets or sets the block option of the last block of a blockwise sent request.
+        /// When the server sends the response, this block option has to be acknowledged.
         /// </summary>
-        public BlockwiseStatus OscoreRequestBlockStatus { get; set; }
-
-        /// <summary>
-        /// Gets or sets the status of the security blockwise transfer of the response,
-        /// or null in case of a normal transfer,
-        /// </summary>
-        public BlockwiseStatus OSCOAP_ResponseBlockStatus { get; set; }
+        public BlockOption SecureBlock1ToAck { get; set; }
 
         /// <summary>
         /// Gets or sets the OSCOAP security context for the exchange
@@ -195,9 +198,9 @@ namespace Com.AugustCellars.CoAP.Net
         /// </summary>
         public virtual void SendResponse(Response response)
         {
-            response.Destination = Request.Source;
+            response.Destination = CurrentRequest.Source;
             Response = response;
-            response.Session = Request.Session;
+            response.Session = CurrentRequest.Session;
             EndPoint.SendResponse(this, response);
         }
 

@@ -85,7 +85,7 @@ namespace Com.AugustCellars.CoAP.Stack
         /// <summary>
         /// // Schedules a retransmission for confirmable messages.
         /// </summary>
-        public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (request.Type == MessageType.Unknown) {
                 request.Type = MessageType.CON;
@@ -96,7 +96,7 @@ namespace Com.AugustCellars.CoAP.Stack
                 PrepareRetransmission(exchange, request, ctx => SendRequest(nextLayer, exchange, request));
             }
 
-            base.SendRequest(nextLayer, exchange, request);
+            return base.SendRequest(nextLayer, exchange, request);
         }
 
         /// <summary>
@@ -152,7 +152,7 @@ namespace Com.AugustCellars.CoAP.Stack
         /// server has not yet decided what to do with the request and we cannot do
         /// anything.
         /// </summary>
-        public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if (request.Duplicate) {
                 // Request is a duplicate, so resend ACK, RST or response
@@ -185,8 +185,9 @@ namespace Com.AugustCellars.CoAP.Stack
             else {
                 // Request is not a duplicate
                 exchange.CurrentRequest = request;
-                base.ReceiveRequest(nextLayer, exchange, request);
+                return base.ReceiveRequest(nextLayer, exchange, request);
             }
+            return false;
         }
 
         /// <summary>

@@ -9,6 +9,7 @@
  */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Timers;
@@ -55,15 +56,26 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         }
 
         /// <inheritdoc/>
-        public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
-            //  This assumes we don't change individual options - if this is not true then we need to do a deep copy.
-            exchange.PreSecurityOptions = request.GetOptions().ToList();
-
-            if ((request.Oscoap == null) && (exchange.OscoreContext == null)) {
-                base.SendRequest(nextLayer, exchange, request);
+            if ((request.OscoreContext == null) && (exchange.OscoreContext == null)) {
+                return base.SendRequest(nextLayer, exchange, request);
             }
-            else if (request.HasOption(OptionType.Block2) && request.Block2.NUM > 0) {
+
+            if (exchange.OscoreContext == null) {
+                exchange.OscoreContext = request.OscoreContext;
+            }
+
+            exchange.PreSecurityRequest = new Request(request.Method) {
+                Payload = request.Payload,
+                Destination = request.Destination,
+                Token = request.Token,
+                Type = MessageType.CON,
+                OscoreContext = request.OscoreContext
+            };
+            exchange.PreSecurityRequest.AddOptions(request.GetOptions());
+
+            if (request.HasOption(OptionType.Block2) && request.Block2.NUM > 0) {
                 // This is the case if the user has explicitly added a block option
                 // for random access.
                 // Note: We do not regard it as random access when the block num is
@@ -76,29 +88,31 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 status.CurrentSZX = block2.SZX;
                 status.CurrentNUM = block2.NUM;
                 status.IsRandomAccess = true;
-                exchange.OSCOAP_ResponseBlockStatus = status;
-                base.SendRequest(nextLayer, exchange, request);
+                Exchange.KeyID keyId = new Exchange.KeyID(request.ID, request.Source, null);
+                exchange.SecureResponseBlockStatus = status;
+                return base.SendRequest(nextLayer, exchange, request);
             }
             else if (RequiresBlockwise(request)) {
                 // This must be a large POST or PUT request
                 log.Debug(m => m($"Request payload {request.PayloadSize}/{_maxMessageSize} requires Blockwise."));
-
+                
                 BlockwiseStatus status = FindRequestBlockStatus(exchange, request);
-                Request block = GetNextRequestBlock(request, exchange.PreSecurityOptions, status);
-                exchange.OscoreRequestBlockStatus = status;
+
+                Request block = GetNextRequestBlock(exchange.PreSecurityRequest, status);
+                exchange.SecureRequestBlockStatus = status;
                 exchange.CurrentRequest = block;
 
                 log.Debug($"Block message to send: {block}");
-                base.SendRequest(nextLayer, exchange, block);
+                return base.SendRequest(nextLayer, exchange, block);
             }
             else {
                 exchange.CurrentRequest = request;
-                base.SendRequest(nextLayer, exchange, request);
+                return base.SendRequest(nextLayer, exchange, request);
             }
         }
 
         /// <inheritdoc/>
-        public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+        public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
         {
             if ((request.Oscoap == null) && (exchange.OscoreContext == null)) {
                 base.ReceiveRequest(nextLayer, exchange, request);
@@ -110,12 +124,13 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     log.Debug("Request contains block1 option " + block1);
                 }
 
-                BlockwiseStatus status = FindRequestBlockStatus(exchange, request);
+                SecureBlockwiseData blockStatus = FindRequestBlockData(exchange.OscoreContext, request);
+                BlockwiseStatus status = blockStatus.BlockStatus;
                 if (block1.NUM == 0 && status.CurrentNUM > 0) {
                     // reset the blockwise transfer
                         log.Debug("Block1 num is 0, the client has restarted the blockwise transfer. Reset status.");
                     status = new BlockwiseStatus(request.ContentType);
-                    exchange.OscoreRequestBlockStatus = status;
+                    exchange.OscoreContext.RequestBlockStatus = status;
                 }
 
                 if (block1.NUM == status.CurrentNUM) {
@@ -129,7 +144,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                         exchange.CurrentResponse = error;
                         base.SendResponse(nextLayer, exchange, error);
-                        return;
+                        return false;
                     }
 
                     status.CurrentNUM = status.CurrentNUM + 1;
@@ -149,7 +164,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                             log.Debug("This was the last block. Deliver request");
 
                         // Remember block to acknowledge. TODO: We might make this a boolean flag in status.
-                        exchange.Block1ToAck = block1;
+                        exchange.SecureBlock1ToAck = block1;
 
                         // Block2 early negotiation
                         EarlyBlock2Negotiation(exchange, request);
@@ -159,7 +174,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         AssembleMessage(status, assembled, request);
 
                         exchange.Request = assembled;
-                        base.ReceiveRequest(nextLayer, exchange, assembled);
+                        return base.ReceiveRequest(nextLayer, exchange, assembled);
                     }
                 }
                 else {
@@ -175,57 +190,68 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     base.SendResponse(nextLayer, exchange, error);
                 }
             }
-            else if (exchange.Response != null && request.HasOption(OptionType.Block2)) {
-                // The response has already been generated and the client just wants
-                // the next block of it
-                BlockOption block2 = request.Block2;
-                Response response = exchange.Response;
-                BlockwiseStatus status = FindResponseBlockStatus(exchange, response);
-                status.CurrentNUM = block2.NUM;
-                status.CurrentSZX = block2.SZX;
+            else if (request.HasOption(OptionType.Block2)) {
+                SecureBlockwiseData blockwiseData = FindResponseBlockData(exchange.OscoreContext, request, null, false);
 
-                Response block = GetNextResponseBlock(response, status);
-                block.Token = request.Token;
-                block.RemoveOptions(OptionType.Observe);
+                if (blockwiseData != null && blockwiseData.OpenResponse != null) {
 
-                if (status.Complete) {
-                    // clean up blockwise status
-                    if (log.IsDebugEnabled) {
-                        log.Debug("Ongoing is complete " + status);
+                    // The response has already been generated and the client just wants
+                    // the next block of it
+                    BlockOption block2 = request.Block2;
+                    Response response = blockwiseData.OpenResponse;
+                    BlockwiseStatus status = blockwiseData.BlockStatus;
+                    status.CurrentNUM = block2.NUM;
+                    status.CurrentSZX = block2.SZX;
+
+                    Response block = GetNextResponseBlock(response, status);
+                    block.Token = request.Token;
+                    block.RemoveOptions(OptionType.Observe);
+
+                    if (status.Complete) {
+                        // clean up blockwise status
+                        if (log.IsDebugEnabled) {
+                            log.Debug("Ongoing is complete " + status);
+                        }
+
+                        exchange.OscoreContext.ResponseBlockStatus = null;
+                        ClearBlockCleanup(exchange.OscoreContext);
+                    }
+                    else {
+                        if (log.IsDebugEnabled) {
+                            log.Debug("Ongoing is continuing " + status);
+                        }
                     }
 
-                    exchange.OSCOAP_ResponseBlockStatus = null;
-                    ClearBlockCleanup(exchange);
+                    exchange.CurrentResponse = block;
+                    base.SendResponse(nextLayer, exchange, block);
                 }
                 else {
-                    if (log.IsDebugEnabled) {
-                        log.Debug("Ongoing is continuing " + status);
-                    }
+                    EarlyBlock2Negotiation(exchange, request);
+
+                    exchange.Request = request;
+                    return base.ReceiveRequest(nextLayer, exchange, request);
                 }
-
-                exchange.CurrentResponse = block;
-                base.SendResponse(nextLayer, exchange, block);
-
             }
             else {
                 EarlyBlock2Negotiation(exchange, request);
 
                 exchange.Request = request;
-                base.ReceiveRequest(nextLayer, exchange, request);
+                return base.ReceiveRequest(nextLayer, exchange, request);
             }
+            return false;
         }
 
         /// <inheritdoc/>
         public override void SendResponse(INextLayer nextLayer, Exchange exchange, Response response)
         {
-            if ((exchange.OscoreContext == null) && (response.Oscoap == null)) {
+            if (exchange.OscoreContext == null)  {
                 base.SendResponse(nextLayer, exchange, response);
                 return;
             }
 
-            BlockOption block1 = exchange.Block1ToAck;
+            BlockOption block1 = exchange.SecureBlock1ToAck;
             if (block1 != null) {
-                exchange.Block1ToAck = null;
+                exchange.SecureBlock1ToAck = null;
             }
 
             if (RequiresBlockwise(exchange, response)) {
@@ -233,12 +259,12 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     log.Debug("Response payload " + response.PayloadSize + "/" + _maxMessageSize + " requires Blockwise");
                 }
 
-                BlockwiseStatus status = FindResponseBlockStatus(exchange, response);
+                SecureBlockwiseData blockData = FindResponseBlockData(exchange.OscoreContext, exchange.Request, response);
+                BlockwiseStatus status = blockData.BlockStatus;
 
-                Response block = GetNextResponseBlock(response, status);
+                Response block = GetNextResponseBlock(blockData.OpenResponse, status);
 
-                if (block1 != null) // in case we still have to ack the last block1
-                {
+                if (block1 != null) { // in case we still have to ack the last block
                     block.SetOption(block1);
                 }
 
@@ -252,8 +278,8 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         log.Debug("Ongoing finished on first block " + status);
                     }
 
-                    exchange.OSCOAP_ResponseBlockStatus = null;
-                    ClearBlockCleanup(exchange);
+                    exchange.OscoreContext.ResponseBlockStatus = null;
+                    ClearBlockCleanup(exchange.OscoreContext);
                 }
                 else {
                     if (log.IsDebugEnabled) {
@@ -271,7 +297,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 exchange.CurrentResponse = response;
                 // Block1 transfer completed
-                ClearBlockCleanup(exchange);
+                ClearBlockCleanup(exchange.OscoreContext);
                 base.SendResponse(nextLayer, exchange, response);
             }
         }
@@ -279,7 +305,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         /// <inheritdoc/>
         public override void ReceiveResponse(INextLayer nextLayer, Exchange exchange, Response response)
         {
-            if ((exchange.OscoreContext == null) && (response.Oscoap == null)) {
+            if (exchange.OscoreContext == null) {
                 base.ReceiveResponse(nextLayer, exchange, response);
                 return;
             }
@@ -312,7 +338,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 // TODO: What if request has not been sent blockwise (server error)
                 log.Debug(m => m("Response acknowledges block {block1}"));
 
-                BlockwiseStatus status = exchange.OscoreRequestBlockStatus;
+                BlockwiseStatus status = exchange.SecureRequestBlockStatus;
                 if (!status.Complete) {
                     // TODO: the response code should be CONTINUE. Otherwise deliver
                     // Send next block
@@ -323,7 +349,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
     
                     status.CurrentNUM = nextNum;
                     status.CurrentSZX = block1.SZX;
-                    Request nextBlock = GetNextRequestBlock(exchange.Request, exchange.PreSecurityOptions, status);
+                    Request nextBlock = GetNextRequestBlock(exchange.PreSecurityRequest, status);
                     if (nextBlock.Token == null) {
                         nextBlock.Token = response.Token; // reuse same token
                     }
@@ -373,9 +399,9 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                         Request block = new Request(request.Method);
                         // NON could make sense over SMS or similar transports
-                        block.Type = request.Type;
-                        block.Destination = request.Destination;
-                        block.SetOptions(exchange.PreSecurityOptions /* request.GetOptions()*/);
+                        block.Type =  request.Type;
+                        block.Destination = response.Source; // request.Destination;
+                        block.SetOptions(exchange.PreSecurityRequest.GetOptions());
                         block.SetOption(new BlockOption(OptionType.Block2, num, szx, m));
                         // we use the same token to ease traceability (GET without Observe no longer cancels relations)
                         block.Token = response.Token;
@@ -406,7 +432,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                             assembled.AddOption(Option.Create(OptionType.Observe, observe));
                             // This is necessary for notifications that are sent blockwise:
                             // Reset block number AND container with all blocks
-                            exchange.OSCOAP_ResponseBlockStatus = null;
+                            exchange.OscoreContext.ResponseBlockStatus = null;
                         }
 
                         if (log.IsDebugEnabled) {
@@ -447,35 +473,110 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                     log.Debug("Request with early block negotiation " + block2 + ". Create and set new Block2 status: " + status2);
                 }
 
-                exchange.OSCOAP_ResponseBlockStatus = status2;
+                exchange.OscoreContext.ResponseBlockStatus = status2;
             }
         }
+
+        static readonly OptionType[] ignoreOptionTypes = new OptionType[] {
+            OptionType.Block1,
+            OptionType.Block2
+        };
 
         /// <summary>
         /// Notice:
         /// This method is used by SendRequest and ReceiveRequest.
         /// Be careful, making changes to the status in here.
         /// </summary>
-        private BlockwiseStatus FindRequestBlockStatus(Exchange exchange, Request request)
+        private SecureBlockwiseData FindRequestBlockData(SecurityContext context, Request request, bool create = true)
         {
-            BlockwiseStatus status = exchange.OscoreRequestBlockStatus;
-            if (status == null) {
-                status = new BlockwiseStatus(request.ContentType);
-                status.CurrentSZX = BlockOption.EncodeSZX(_defaultBlockSize);
-                exchange.OscoreRequestBlockStatus = status;
-                if (log.IsDebugEnabled) {
-                    log.Debug("There is no assembler status yet. Create and set new Block1 status: " + status);
+            if (context.BlockwiseDictionary == null) {
+                if (!create) {
+                    return null;
                 }
+
+                context.BlockwiseDictionary = new ConcurrentDictionary<SecurityContext.KeyId, SecureBlockwiseData>();
             }
-            else {
+
+            CacheKey cacheKey = new CacheKey(request.GetOptions(), ignoreOptionTypes);
+            SecurityContext.KeyId keyId = new SecurityContext.KeyId(cacheKey, request.Source, false);
+
+            SecureBlockwiseData blockData;
+            context.BlockwiseDictionary.TryGetValue(keyId, out blockData);
+            if (blockData == null) {
+                if (!create) {
+                    return null;
+                }
+
+                BlockwiseStatus blockStatus;
+                blockStatus = new BlockwiseStatus(request.ContentType) {
+                    CurrentSZX = BlockOption.EncodeSZX(_defaultBlockSize)
+                };
+
                 if (log.IsDebugEnabled) {
-                    log.Debug("Current Block1 status: " + status);
+                    log.Debug("There is no assembler status yet. Create and set new Block1 status: " + blockStatus);
+                }
+
+                blockData = new SecureBlockwiseData {
+                    BlockStatus = blockStatus
+                };
+
+                if (!context.BlockwiseDictionary.TryAdd(keyId, blockData)) {
+                    throw new CoAPException();
                 }
             }
 
             // sets a timeout to complete exchange
-            PrepareBlockCleanup(exchange);
-            return status;
+            // M00BUG PrepareBlockCleanup(context);
+            return blockData;
+        }
+
+        /// <summary>
+            /// Notice:
+            /// This method is used by SendRequest and ReceiveRequest.
+            /// Be careful, making changes to the status in here.
+            /// </summary>
+            private SecureBlockwiseData FindResponseBlockData(SecurityContext context, Request request, Response response, bool create = true)
+            {
+                if (context.BlockwiseDictionary == null) {
+                    if (!create) {
+                        return null;
+                    }
+                    context.BlockwiseDictionary = new ConcurrentDictionary<SecurityContext.KeyId, SecureBlockwiseData>();
+                }
+
+                CacheKey cacheKey = new CacheKey(request.GetOptions(), ignoreOptionTypes);
+                SecurityContext.KeyId keyId = new SecurityContext.KeyId(cacheKey, request.Source, true);
+
+                SecureBlockwiseData blockData;
+                context.BlockwiseDictionary.TryGetValue(keyId, out blockData);
+                if (blockData == null) {
+                    if (!create) {
+                        return null;
+                    }
+                    BlockwiseStatus blockStatus;
+                    blockStatus = new BlockwiseStatus(request.ContentType)
+                    {
+                        CurrentSZX = BlockOption.EncodeSZX(_defaultBlockSize)
+                    };
+
+                    if (log.IsDebugEnabled) {
+                        log.Debug("There is no assembler status yet. Create and set new Block1 status: " + blockStatus);
+                    }
+
+                    blockData = new SecureBlockwiseData
+                    {
+                        BlockStatus = blockStatus,
+                        OpenResponse = response
+                    };
+
+                    if (!context.BlockwiseDictionary.TryAdd(keyId, blockData)) {
+                        throw new CoAPException();
+                    }
+                }
+
+                // sets a timeout to complete exchange
+                // M00BUG PrepareBlockCleanup(context);
+                return blockData;
         }
 
         /// <summary>
@@ -485,11 +586,11 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         /// </summary>
         private BlockwiseStatus FindResponseBlockStatus(Exchange exchange, Response response)
         {
-            BlockwiseStatus status = exchange.OSCOAP_ResponseBlockStatus;
+            BlockwiseStatus status = exchange.SecureResponseBlockStatus;
             if (status == null) {
                 status = new BlockwiseStatus(response.ContentType);
                 status.CurrentSZX = BlockOption.EncodeSZX(_defaultBlockSize);
-                exchange.OSCOAP_ResponseBlockStatus = status;
+                exchange.SecureResponseBlockStatus = status;
                 if (log.IsDebugEnabled) {
                     log.Debug("There is no blockwise status yet. Create and set new Block2 status: " + status);
                 }
@@ -505,15 +606,43 @@ namespace Com.AugustCellars.CoAP.OSCOAP
             return status;
         }
 
-        private Request GetNextRequestBlock(Request request, List<Option> originalOptions, BlockwiseStatus status)
+        /// <summary>
+        /// Notice:
+        /// This method is used by SendResponse and ReceiveResponse.
+        /// Be careful, making changes to the status in here.
+        /// </summary>
+        private BlockwiseStatus FindRequestBlockStatus(Exchange exchange, Request request)
+        {
+            BlockwiseStatus status = exchange.SecureRequestBlockStatus;
+            if (status == null) {
+                status = new BlockwiseStatus(request.ContentType);
+                status.CurrentSZX = BlockOption.EncodeSZX(_defaultBlockSize);
+                exchange.SecureRequestBlockStatus = status;
+                if (log.IsDebugEnabled) {
+                    log.Debug("There is no blockwise status yet. Create and set new Block2 status: " + status);
+                }
+            }
+            else {
+                if (log.IsDebugEnabled) {
+                    log.Debug("Current Block2 status: " + status);
+                }
+            }
+
+            // sets a timeout to complete exchange
+            PrepareBlockCleanup(exchange);
+            return status;
+        }
+
+        private Request GetNextRequestBlock(Request request, BlockwiseStatus status)
         {
             int num = status.CurrentNUM;
             int szx = status.CurrentSZX;
             Request block = new Request(request.Method);
-            block.SetOptions(originalOptions);
+            block.SetOptions(request.GetOptions());
             block.Destination = request.Destination;
             block.Token = request.Token;
             block.Type = MessageType.CON;
+            block.OscoreContext = request.OscoreContext;
 
             int currentSize = 1 << (4 + szx);
             int from = num * currentSize;
@@ -546,6 +675,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                 block.Token = response.Token;
                 block.SetOptions(response.GetOptions());
                 block.TimedOut += (o, e) => response.IsTimedOut = true;
+                block.Type = response.Type;
             }
 
             int payloadSize = response.PayloadSize;
@@ -613,7 +743,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         private bool RequiresBlockwise(Exchange exchange, Response response)
         {
             return response.PayloadSize > _maxMessageSize
-                   || exchange.OSCOAP_ResponseBlockStatus != null;
+                   || exchange.OscoreContext.ResponseBlockStatus != null;
         }
 
         /// <summary>
@@ -644,7 +774,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
         /// <summary>
         /// Clears the clean-up task.
         /// </summary>
-        protected void ClearBlockCleanup(Exchange exchange)
+        protected void ClearBlockCleanup(SecurityContext exchange)
         {
             Timer timer = exchange.Remove("BlockCleanupTimer") as Timer;
             if (timer != null) {

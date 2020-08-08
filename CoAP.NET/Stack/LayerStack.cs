@@ -107,7 +107,7 @@ namespace Com.AugustCellars.CoAP.Stack
 
         class StackTopLayer : AbstractLayer
         {
-            public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+            public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
             {
                 if (exchange == null)
                 {
@@ -116,7 +116,7 @@ namespace Com.AugustCellars.CoAP.Stack
                 }
                 
                 exchange.Request = request;
-                base.SendRequest(nextLayer, exchange, request);
+                return base.SendRequest(nextLayer, exchange, request);
             }
 
             public override void SendResponse(INextLayer nextLayer, Exchange exchange, Response response)
@@ -125,13 +125,14 @@ namespace Com.AugustCellars.CoAP.Stack
                 base.SendResponse(nextLayer, exchange, response);
             }
 
-            public override void ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
+            public override bool ReceiveRequest(INextLayer nextLayer, Exchange exchange, Request request)
             {
                 // if there is no BlockwiseLayer we still have to set it
                 if (exchange.Request == null)
                     exchange.Request = request;
                 if (exchange.Deliverer != null)
                     exchange.Deliverer.DeliverRequest(exchange);
+                return false;
             }
 
             public override void ReceiveResponse(INextLayer nextLayer, Exchange exchange, Response response)
@@ -151,9 +152,10 @@ namespace Com.AugustCellars.CoAP.Stack
 
         class StackBottomLayer : AbstractLayer
         {
-            public override void SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
+            public override bool SendRequest(INextLayer nextLayer, Exchange exchange, Request request)
             {
                 exchange.Outbox.SendRequest(exchange, request);
+                return false;
             }
 
             public override void SendResponse(INextLayer nextLayer, Exchange exchange, Response response)
@@ -192,9 +194,9 @@ namespace Com.AugustCellars.CoAP.Stack
                 return _entry.NextEntry.Filter.SendEmptyMessage(_entry.NextEntry.NextFilter, exchange, message);
             }
 
-            public void ReceiveRequest(Exchange exchange, Request request)
+            public bool ReceiveRequest(Exchange exchange, Request request)
             {
-                _entry.PrevEntry.Filter.ReceiveRequest(_entry.PrevEntry.NextFilter, exchange, request);
+                return _entry.PrevEntry.Filter.ReceiveRequest(_entry.PrevEntry.NextFilter, exchange, request);
             }
 
             public void ReceiveResponse(Exchange exchange, Response response)
