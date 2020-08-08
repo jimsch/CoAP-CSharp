@@ -308,6 +308,8 @@ namespace Com.AugustCellars.CoAP.Stack
                         nextBlock.Token = response.Token; // reuse same token
                     }
 
+                    nextBlock.RemoveOptions(OptionType.Observe);
+                    
                     exchange.CurrentRequest = nextBlock;
                     base.SendRequest(nextLayer, exchange, nextBlock);
                     // do not deliver response
