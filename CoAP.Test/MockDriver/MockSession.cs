@@ -5,6 +5,9 @@ using Com.AugustCellars.CoAP;
 
 namespace CoAP.Test.Std10.MockItems
 {
+#pragma warning disable CS0067 // Event is never used
+
+
     public class MockSession : ISession
     {
         /// <inheritdoc />
