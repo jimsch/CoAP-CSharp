@@ -404,7 +404,7 @@ namespace Com.AugustCellars.CoAP.OSCOAP
                         block.SetOptions(exchange.PreSecurityRequest.GetOptions());
                         block.SetOption(new BlockOption(OptionType.Block2, num, szx, m));
                         // we use the same token to ease traceability (GET without Observe no longer cancels relations)
-                        block.Token = response.Token;
+                        // block.Token = response.Token;
                         // make sure not to use Observe for block retrieval
                         block.RemoveOptions(OptionType.Observe);
 
@@ -479,7 +479,8 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
         static readonly OptionType[] ignoreOptionTypes = new OptionType[] {
             OptionType.Block1,
-            OptionType.Block2
+            OptionType.Block2,
+            OptionType.Observe
         };
 
         /// <summary>
@@ -549,10 +550,15 @@ namespace Com.AugustCellars.CoAP.OSCOAP
 
                 SecureBlockwiseData blockData;
                 context.BlockwiseDictionary.TryGetValue(keyId, out blockData);
-                if (blockData == null) {
+                if (blockData == null || blockData.BlockStatus.Complete) {
                     if (!create) {
                         return null;
                     }
+
+                    if (blockData != null) {
+                        context.BlockwiseDictionary.TryRemove(keyId, out blockData);
+                    }
+
                     BlockwiseStatus blockStatus;
                     blockStatus = new BlockwiseStatus(request.ContentType)
                     {
@@ -665,17 +671,15 @@ namespace Com.AugustCellars.CoAP.OSCOAP
             int szx = status.CurrentSZX;
             int num = status.CurrentNUM;
 
-            if (response.HasOption(OptionType.Observe)) {
-                // a blockwise notification transmits the first block only
-                block = response;
-            }
-            else {
-                block = new Response(response.StatusCode);
-                block.Destination = response.Destination;
-                block.Token = response.Token;
-                block.SetOptions(response.GetOptions());
-                block.TimedOut += (o, e) => response.IsTimedOut = true;
-                block.Type = response.Type;
+            block = new Response(response.StatusCode);
+            block.Destination = response.Destination;
+            block.Token = response.Token;
+            block.SetOptions(response.GetOptions());
+            block.TimedOut += (o, e) => response.IsTimedOut = true;
+            block.Type = response.Type;
+
+            if (response.HasOption(OptionType.Observe) && num == 0) {
+                block.SetOptions(response.GetOptions(OptionType.Observe));
             }
 
             int payloadSize = response.PayloadSize;
