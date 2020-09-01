@@ -238,7 +238,7 @@ namespace Com.AugustCellars.CoAP.Stack
                         exchange.CurrentRequest.IsRejected = true;
                     }
                     else {
-                        exchange.CurrentResponse.IsRejected = true;
+                        exchange.Response.IsRejected = true;
                     }
 
                     break;
@@ -257,6 +257,9 @@ namespace Com.AugustCellars.CoAP.Stack
 
         private void PrepareRetransmission(Exchange exchange, Message msg, Action<TransmissionContext> retransmit)
         {
+            if (_maxRetransmitCount == 0) {
+                return;
+            }
             TransmissionContext ctx = exchange.GetOrAdd<TransmissionContext>(
                 _TransmissionContextKey, _ => new TransmissionContext(_config, exchange, msg, retransmit, _maxRetransmitCount));
 
